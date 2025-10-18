@@ -1,96 +1,207 @@
+#include "optional.h"
+
 #include <cassert>
-#include <filesystem>
-#include <fstream>
-#include <iostream>
-#include <regex>
-#include <sstream>
-#include <string>
-#include <vector>
 
-using namespace std;
-using filesystem::path;
+struct C {
+    C() noexcept {
+        ++def_ctor;
+    }
+    C(const C& /*other*/) noexcept {
+        ++copy_ctor;
+    }
+    C(C&& /*other*/) noexcept {
+        ++move_ctor;
+    }
+    C& operator=(const C& other) noexcept {
+        if (this != &other) {
+            ++copy_assign;
+        }
+        return *this;
+    }
+    C& operator=(C&& /*other*/) noexcept {
+        ++move_assign;
+        return *this;
+    }
+    ~C() {
+        ++dtor;
+    }
 
-path operator""_p(const char* data, std::size_t sz) {
-    return path(data, data + sz);
+    static size_t InstanceCount() {
+        return def_ctor + copy_ctor + move_ctor - dtor;
+    }
+
+    static void Reset() {
+        def_ctor = 0;
+        copy_ctor = 0;
+        move_ctor = 0;
+        copy_assign = 0;
+        move_assign = 0;
+        dtor = 0;
+    }
+
+    inline static size_t def_ctor = 0;
+    inline static size_t copy_ctor = 0;
+    inline static size_t move_ctor = 0;
+    inline static size_t copy_assign = 0;
+    inline static size_t move_assign = 0;
+    inline static size_t dtor = 0;
+};
+
+void TestInitialization() {
+    C::Reset();
+    {
+        Optional<C> o;
+        assert(!o.HasValue());
+        assert(C::InstanceCount() == 0);
+    }
+    assert(C::InstanceCount() == 0);
+
+    C::Reset();
+    {
+        C c;
+        Optional<C> o(c);
+        assert(o.HasValue());
+        assert(C::def_ctor == 1 && C::copy_ctor == 1);
+        assert(C::InstanceCount() == 2);
+    }
+    assert(C::InstanceCount() == 0);
+
+    C::Reset();
+    {
+        C c;
+        Optional<C> o(std::move(c));
+        assert(o.HasValue());
+        assert(C::def_ctor == 1 && C::move_ctor == 1 && C::copy_ctor == 0 && C::copy_assign == 0
+               && C::move_assign == 0);
+        assert(C::InstanceCount() == 2);
+    }
+    assert(C::InstanceCount() == 0);
+
+    C::Reset();
+    {
+        C c;
+        Optional<C> o1(c);
+        const Optional<C> o2(o1);
+        assert(o1.HasValue());
+        assert(o2.HasValue());
+        assert(C::def_ctor == 1 && C::move_ctor == 0 && C::copy_ctor == 2 && C::copy_assign == 0
+               && C::move_assign == 0);
+        assert(C::InstanceCount() == 3);
+    }
+    assert(C::InstanceCount() == 0);
+
+    C::Reset();
+    {
+        C c;
+        Optional<C> o1(c);
+        const Optional<C> o2(std::move(o1));
+        assert(C::def_ctor == 1 && C::copy_ctor == 1 && C::move_ctor == 1 && C::copy_assign == 0
+               && C::move_assign == 0);
+        assert(C::InstanceCount() == 3);
+    }
+    assert(C::InstanceCount() == 0);
 }
 
-// напишите эту функцию
-bool Preprocess(const path& in_file, const path& out_file, const vector<path>& include_directories);
-
-string GetFileContents(string file) {
-    ifstream stream(file);
-
-    // конструируем string по двум итераторам
-    return {(istreambuf_iterator<char>(stream)), istreambuf_iterator<char>()};
+void TestAssignment() {
+    Optional<C> o1;
+    Optional<C> o2;
+    {  // Assign a value to empty
+        C::Reset();
+        C c;
+        o1 = c;
+        assert(C::def_ctor == 1 && C::copy_ctor == 1 && C::dtor == 0);
+    }
+    {  // Assign a non-empty to empty
+        C::Reset();
+        o2 = o1;
+        assert(C::copy_ctor == 1 && C::copy_assign == 0 && C::dtor == 0);
+    }
+    {  // Assign non empty to non-empty
+        C::Reset();
+        o2 = o1;
+        assert(C::copy_ctor == 0 && C::copy_assign == 1 && C::dtor == 0);
+    }
+    {  // Assign empty to non empty
+        C::Reset();
+        Optional<C> empty;
+        o1 = empty;
+        assert(C::copy_ctor == 0 && C::dtor == 1);
+        assert(!o1.HasValue());
+    }
 }
 
-void Test() {
-    error_code err;
-    filesystem::remove_all("sources"_p, err);
-    filesystem::create_directories("sources"_p / "include2"_p / "lib"_p, err);
-    filesystem::create_directories("sources"_p / "include1"_p, err);
-    filesystem::create_directories("sources"_p / "dir1"_p / "subdir"_p, err);
+void TestMoveAssignment() {
+    {  // Assign a value to empty
+        Optional<C> o1;
+        C::Reset();
+        C c;
+        o1 = std::move(c);
+        assert(C::def_ctor == 1 && C::move_ctor == 1 && C::dtor == 0);
+    }
+    {  // Assign a non-empty to empty
+        Optional<C> o1;
+        Optional<C> o2{C{}};
+        C::Reset();
+        o1 = std::move(o2);
+        assert(C::move_ctor == 1 && C::move_assign == 0 && C::dtor == 0);
+    }
+    {  // Assign non empty to non-empty
+        Optional<C> o1{C{}};
+        Optional<C> o2{C{}};
+        C::Reset();
+        o2 = std::move(o1);
+        assert(C::copy_ctor == 0 && C::move_assign == 1 && C::dtor == 0);
+    }
+    {  // Assign empty to non empty
+        Optional<C> o1{C{}};
+        C::Reset();
+        Optional<C> empty;
+        o1 = std::move(empty);
+        assert(C::copy_ctor == 0 && C::move_ctor == 0 && C::move_assign == 0 && C::dtor == 1);
+        assert(!o1.HasValue());
+    }
+}
 
+void TestValueAccess() {
+    using namespace std::literals;
     {
-        ofstream file("sources/a.cpp");
-        file << "// this comment before include\n"
-                "#include \"dir1/b.h\"\n"
-                "// text between b.h and c.h\n"
-                "#include \"dir1/d.h\"\n"
-                "\n"
-                "int SayHello() {\n"
-                "    cout << \"hello, world!\" << endl;\n"
-                "#   include<dummy.txt>\n"
-                "}\n"s;
+        Optional<std::string> o;
+        o = "hello"s;
+        assert(o.HasValue());
+        assert(o.Value() == "hello"s);
+        assert(&*o == &o.Value());
+        assert(o->length() == 5);
     }
     {
-        ofstream file("sources/dir1/b.h");
-        file << "// text from b.h before include\n"
-                "#include \"subdir/c.h\"\n"
-                "// text from b.h after include"s;
+        try {
+            Optional<int> o;
+            [[maybe_unused]] int v = o.Value();
+            assert(false);
+        } catch (const BadOptionalAccess& /*e*/) {
+        } catch (...) {
+            assert(false);
+        }
     }
-    {
-        ofstream file("sources/dir1/subdir/c.h");
-        file << "// text from c.h before include\n"
-                "#include <std1.h>\n"
-                "// text from c.h after include\n"s;
-    }
-    {
-        ofstream file("sources/dir1/d.h");
-        file << "// text from d.h before include\n"
-                "#include \"lib/std2.h\"\n"
-                "// text from d.h after include\n"s;
-    }
-    {
-        ofstream file("sources/include1/std1.h");
-        file << "// std1\n"s;
-    }
-    {
-        ofstream file("sources/include2/lib/std2.h");
-        file << "// std2\n"s;
-    }
+}
 
-    assert((!Preprocess("sources"_p / "a.cpp"_p, "sources"_p / "a.in"_p,
-                                  {"sources"_p / "include1"_p,"sources"_p / "include2"_p})));
-
-    ostringstream test_out;
-    test_out << "// this comment before include\n"
-                "// text from b.h before include\n"
-                "// text from c.h before include\n"
-                "// std1\n"
-                "// text from c.h after include\n"
-                "// text from b.h after include\n"
-                "// text between b.h and c.h\n"
-                "// text from d.h before include\n"
-                "// std2\n"
-                "// text from d.h after include\n"
-                "\n"
-                "int SayHello() {\n"
-                "    cout << \"hello, world!\" << endl;\n"s;
-
-    assert(GetFileContents("sources/a.in"s) == test_out.str());
+void TestReset() {
+    C::Reset();
+    {
+        Optional<C> o{C()};
+        assert(o.HasValue());
+        o.Reset();
+        assert(!o.HasValue());
+    }
 }
 
 int main() {
-    Test();
+    try {
+        TestInitialization();
+        TestAssignment();
+        TestMoveAssignment();
+        TestValueAccess();
+        TestReset();
+    } catch (...) {
+        assert(false);
+    }
 }
