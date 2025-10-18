@@ -33,14 +33,17 @@ public:
 
     // Операторы * и -> не должны делать никаких проверок на пустоту Optional.
     // Эти проверки остаются на совести программиста
-    T& operator*();
-    const T& operator*() const;
+    T& operator*() &;
+    const T& operator*() const &;
     T* operator->();
     const T* operator->() const;
 
     // Метод Value() генерирует исключение BadOptionalAccess, если Optional пуст
-    T& Value();
-    const T& Value() const;
+    T& Value() &;
+    const T& Value() const &;
+
+    T&& operator*() &&;
+    T&& Value() &&;
 
     void Reset();
 
@@ -106,10 +109,13 @@ Optional<T>& Optional<T>::operator=(T&& rhs){
 template <typename T>
 Optional<T>& Optional<T>::operator=(const Optional& rhs){
     if (this != &rhs) {
-        if (rhs.is_initialized_) {
-            *this = *rhs;
-        } else {
+        if (!rhs.is_initialized_) {
             Reset();
+        } else if (is_initialized_) {
+            **this = *rhs;
+        } else {
+            new (data_) T(*rhs);
+            is_initialized_ = true;
         }
     }
     return *this;
@@ -117,12 +123,13 @@ Optional<T>& Optional<T>::operator=(const Optional& rhs){
 
 template <typename T>
 Optional<T>& Optional<T>::operator=(Optional&& rhs){
-    if (this != &rhs) {
-        if (rhs.is_initialized_) {
-            *this = std::move(*rhs);
-        } else {
-            Reset();
-        }
+    if (!rhs.is_initialized_) {
+        Reset();
+    } else if (is_initialized_) {
+        **this = std::move(*rhs);
+    } else {
+        new (data_) T(std::move(*rhs));
+        is_initialized_ = true;
     }
     return *this;
 }
@@ -138,13 +145,13 @@ bool Optional<T>::HasValue() const{
 }
 
 template <typename T>
-T& Optional<T>::operator*(){
+T& Optional<T>::operator*() & {
     return *reinterpret_cast<T*>(data_);
 }
 
 template <typename T>
-const T& Optional<T>::operator*() const{
-    return *reinterpret_cast<const T*>(data_);
+const T& Optional<T>::operator*() const & {
+    return *const_cast<Optional&>(*this);
 }
 
 template <typename T>
@@ -158,7 +165,7 @@ const T* Optional<T>::operator->() const{
 }
 
 template <typename T>
-T& Optional<T>::Value(){
+T& Optional<T>::Value() & {
     if (!is_initialized_) {
         throw BadOptionalAccess();
     }
@@ -166,11 +173,18 @@ T& Optional<T>::Value(){
 }
 
 template <typename T>
-const T& Optional<T>::Value() const{
-    if (!is_initialized_) {
-        throw BadOptionalAccess();
-    }
-    return **this;
+const T& Optional<T>::Value() const & {
+    return const_cast<Optional&>(*this).Value();
+}
+
+template <typename T>
+T&& Optional<T>::operator*() && {
+    return std::move(**this);
+}
+
+template <typename T>
+T&& Optional<T>::Value() && {
+        return std::move(Value());
 }
 
 template <typename T>
