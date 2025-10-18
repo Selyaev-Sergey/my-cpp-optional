@@ -44,6 +44,9 @@ public:
 
     void Reset();
 
+    template <typename... Args>
+    void Emplace(Args&&... args);
+
 private:
     // alignas нужен для правильного выравнивания блока памяти
     alignas(T) char data_[sizeof(T)];
@@ -176,4 +179,12 @@ void Optional<T>::Reset(){
         reinterpret_cast<T*>(data_)->~T();
         is_initialized_ = false;
     }
+}
+
+template <typename T>
+template <typename... Args>
+void Optional<T>::Emplace(Args&&... args) {
+    Reset(); // Уничтожение предыдущего значения
+    new (data_) T(std::forward<Args>(args)...); // Конструирование нового значения на месте
+    is_initialized_ = true;
 }
